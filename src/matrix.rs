@@ -10,22 +10,23 @@ pub type Matrix3 = Matrix<3, 3>;
 /// Type alias for a 4x4 matrix.
 pub type Matrix4 = Matrix<4, 4>;
 
-/// Type alias for a 1-column matrix (row vector).
+/// Type alias for a 1-column matrix (column vector).
 pub type Vector<const ROWS: usize> = Matrix<ROWS, 1>;
 
-/// Type alias for a 2-row vector.
+/// Type alias for a 2-row column vector.
 pub type Vector2 = Vector<2>;
-/// Type alias for a 3-row vector.
+/// Type alias for a 3-row column vector.
 pub type Vector3 = Vector<3>;
-/// Type alias for a 4-row vector.
+/// Type alias for a 4-row column vector.
 pub type Vector4 = Vector<4>;
 
 /// A generic constant-size matrix.
+#[derive(Clone, Copy, Debug)]
 pub struct Matrix<const ROWS: usize, const COLS: usize>
 where
     [f64; ROWS * COLS]: Sized,
 {
-    /// The elements of this matrix, stored in row-major order.
+    /// The elements of this matrix, stored in column-major order.
     pub elems: MatrixArray<ROWS, COLS>,
 }
 
@@ -34,20 +35,63 @@ where
     [f64; ROWS * COLS]: Sized,
 {
     /// Create and return a matrix with the provided value as every element.
-    pub fn from_array(elems: [f64; ROWS * COLS]) -> Self {
+    pub fn from_array(elems: MatrixArray<ROWS, COLS>) -> Self {
         Self { elems }
+    }
+
+    /// Create and return `Some` matrix from the given column-major slice of elements for this
+    /// matrix. Returns `None` if the size of `elems` is not `ROWS*COLS`.
+    pub fn from_slice(elems: &[f64]) -> Option<Self> {
+        let elem_array: Option<MatrixArray<ROWS, COLS>> = elems.try_into().ok();
+        elem_array.map(Self::from_array)
     }
 
     /// Create and return a matrix with the provided value as every element.
     pub fn filled(elem: f64) -> Self {
-        Self {
-            elems: [elem; ROWS * COLS],
-        }
+        Self::from_array([elem; ROWS * COLS])
     }
 
     /// Create and return a matrix with every element as `0.0f64`.
     pub fn empty() -> Self {
         Self::filled(0.0)
+    }
+
+    /// Create and return a matrix with the given value down the matrix diagonal.
+    pub fn identity_elems(elem: f64) -> Self {
+        let mut matrix = Self::empty();
+        for i in 0..ROWS.min(COLS) {
+            matrix[(i, i)] = elem;
+        }
+        matrix
+    }
+
+    /// Create and return an identity matrix.
+    pub fn identity() -> Self {
+        Self::identity_elems(1.0)
+    }
+
+    /// Create and return a matrix composed of an array of column-vectors.
+    pub fn from_cols(columns: [[f64; ROWS]; COLS]) -> Self {
+        // SAFETY: This unwrap should be safe because flattening a COLSxROWS array should yield a
+        // slice that is ROWS * COLS in size, which allows constructing the matrix from the
+        // flattened slice.
+        Self::from_slice(columns.flatten()).unwrap()
+    }
+
+    /// Return a Vec of columns in this matrix.
+    #[allow(clippy::identity_op)]
+    pub fn cols(&self) -> [Matrix<ROWS, 1>; COLS]
+    where
+        [f64; ROWS * 1]: Sized,
+    {
+        let mut cols = [Vector::default(); COLS];
+        cols.iter_mut().enumerate().for_each(|(ci, val)| {
+            let i = ci * ROWS;
+            // SAFETY: The slice can only have a length of `ROWS` so `None` should never be
+            // returned.
+            *val = Vector::<ROWS>::from_slice(&self.elems[i..(i + ROWS)]).unwrap();
+        });
+        cols
     }
 
     /// Retrieve `Some` reference to the element at the provided at the row and column location or
@@ -74,11 +118,11 @@ where
         &mut self.elems[Self::index(row, col).unwrap_or_else(|| Self::bounds_panic(row, col))]
     }
 
-    // Helper function to get the array index of the element at the provided row and column. Returns
-    // `None` if the row or column is out of bounds
+    // Helper function to get the column-major array index of the element at the provided row and
+    // column. Returns `None` if the row or column is out of bounds.
     fn index(row: usize, col: usize) -> Option<usize> {
         if row < ROWS && col < COLS {
-            Some(row * COLS + col)
+            Some(col * ROWS + row)
         } else {
             None
         }
@@ -90,13 +134,13 @@ where
     }
 }
 
-// Implement default as a matrix with elements of `0.0f64`
+// Implement default as an identity matrix
 impl<const ROWS: usize, const COLS: usize> Default for Matrix<ROWS, COLS>
 where
     [f64; ROWS * COLS]: Sized,
 {
     fn default() -> Self {
-        Self::empty()
+        Self::identity()
     }
 }
 
@@ -194,9 +238,9 @@ where
     fn mul(self, rhs: Matrix<A_COL_B_ROW, B_COL>) -> Self::Output {
         let mut output_matrix = Matrix::empty();
 
-        // Loop through each column for each row in the output matrix
-        for row in 0..A_ROW {
-            for col in 0..B_COL {
+        // Loop through each row for each column in the output matrix
+        for col in 0..B_COL {
+            for row in 0..A_ROW {
                 // Sum up the products of the matrix values
                 let mut sum = 0.0;
                 for cell in 0..A_COL_B_ROW {
